@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bus Prediction Board</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 400px; margin: 50px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        label { display: block; margin-top: 10px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background-color: #007bff; color: white; border: none; margin-top: 15px; border-radius: 4px; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        .result-box { margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 4px; display: none; }
+        .delay-text { color: #dc3545; font-weight: bold; }
+        .status-msg { font-size: 0.85em; font-style: italic; color: #6c757d; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h2>🚌 Bus Live Tracker</h2>
+    
+    <label for="stopSelect">Bus Stop Name:</label>
+    <select id="stopSelect">
+        <option value="">Loading stops from Google Sheet...</option>
+    </select>
+
+    <label for="direction">Direction:</label>
+    <select id="direction">
+        <option value="Amelsbüren Bahnhof">Amelsbüren Bahnhof</option>
+        <option value="Roxel Hallenbad">Roxel Hallenbad</option>
+    </select>
+
+    <button onclick="getBusPrediction()">Check Next Bus</button>
+
+    <div id="resultBox" class="result-box">
+        <h3>Prediction Results:</h3>
+        <p><strong>Stop Name:</strong> <span id="resStopName" style="font-weight: bold;"></span></p>
+        <p><strong>Direction:</strong> <span id="resDirection"></span></p>
+        <p><strong>Scheduled Time:</strong> <span id="resScheduled"></span></p>
+        <p><strong>Estimated Delay:</strong> <span id="resDelay" class="delay-text"></span> minutes</p>
+        <p><strong>Predicted Next Bus:</strong> <span id="resPredicted" style="color: green; font-weight: bold;"></span></p>
+        <p id="liveStatus" class="status-msg"></p>
+    </div>
+    
+    <script>
+    // CHANGE THIS: Point directly to your Cloudflare BACKEND-API Endpoint Worker, NOT the logger
+    const workerUrl = "https://backend-api.echoechung.workers.dev/";
+
+    // 1. Fetch stop names dynamically routed safely through Cloudflare Worker Action 1
+    async function loadStops() {
+        try {
+            const response = await fetch(`${workerUrl}?action=get_stops`);
+            const stops = await response.json();
+            
+            const stopSelect = document.getElementById('stopSelect');
+            stopSelect.innerHTML = ''; 
+
+            stops.forEach(row => {
+                const name = row.stop_name;
+                const id = row.stop_id;
+
+                if (name && id) {
+                    const opt = document.createElement('option');
+                    opt.value = id;          
+                    opt.textContent = name;  
+                    stopSelect.appendChild(opt);
+                }
+            });
+        } catch (err) {
+            console.error("Error loading stops database through Cloudflare Proxy:", err);
+            document.getElementById('stopSelect').innerHTML = '<option>Error loading stops</option>';
+        }
+    }
+
+    // 2. Fetch live SQL calculations from Cloudflare Worker Action 2
+    async function getBusPrediction() {
+        const stopSelect = document.getElementById('stopSelect');
+        const passengerStopId = stopSelect.value;
+        const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text;
+        const directionSelect = document.getElementById('direction').value;
+
+        if (!passengerStopId) {
+            alert("Please select a valid bus stop.");
+            return;
+        }
+
+        const line = "1";
+        const predictionUrl = `${workerUrl}?action=get_prediction&line=${line}&passenger_stop_id=${passengerStopId}&direction=${encodeURIComponent(directionSelect)}`;
+
+        try {
+            const response = await fetch(predictionUrl);
+            const data = await response.json();
+
+            if (data.error) {
+                alert("Error: " + data.error);
+                return;
+            }
+
+            document.getElementById('resStopName').innerText = selectedStopName;
+            document.getElementById('resDirection').innerText = data.direction;
+            document.getElementById('resScheduled').innerText = data.scheduled_time;
+            document.getElementById('resDelay').innerText = data.delay_minutes;
+            document.getElementById('resPredicted').innerText = data.predicted_next_bus;
+            
+            const statusEl = document.getElementById('liveStatus');
+            if (data.bus_found) {
+                statusEl.innerText = `⚡ Live bus tracked! Previous stop: "${data.current_bus_location}".`;
+                statusEl.style.color = "#28a745";
+            } else {
+                statusEl.innerText = "ℹ️ No live bus currently approaching this stop. Displaying scheduled defaults.";
+                statusEl.style.color = "#6c757d";
+            }
+
+            document.getElementById('resultBox').style.display = 'block';
+
+        } catch (error) {
+            console.error("Error fetching data:", error);
+            alert("Failed to connect to the Cloudflare Worker.");
+        }
+    }
+
+    window.onload = loadStops;
+</script>
+
+</body>
+</html>
