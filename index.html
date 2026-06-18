@@ -26,8 +26,15 @@
 
     <label for="direction">Direction:</label>
     <select id="direction">
-        <option value="Amelsbüren Bahnhof">Amelsbüren Bahnhof</option>
-        <option value="Roxel Hallenbad">Roxel Hallenbad</option>
+        <option value="roxel">Roxel (Direction 1)</option>
+        <option value="amelsburen">Amelsbüren (Direction 2)</option>
+    </select>
+
+    <label for="dayType">Day Schedule Type:</label>
+    <select id="dayType">
+        <option value="Monday_Friday">Montag - Freitag</option>
+        <option value="Saturday">Samstag</option>
+        <option value="Sunday">Sonntag</option>
     </select>
 
     <button onclick="getBusPrediction()">Check Next Bus</button>
@@ -43,10 +50,9 @@
     </div>
     
     <script>
-    // CHANGE THIS: Point directly to your Cloudflare BACKEND-API Endpoint Worker, NOT the logger
     const workerUrl = "https://backend-api.echoechung.workers.dev/";
 
-    // 1. Fetch stop names dynamically routed safely through Cloudflare Worker Action 1
+    // 1. Fetch stop names dynamically
     async function loadStops() {
         try {
             const response = await fetch(`${workerUrl}?action=get_stops`);
@@ -72,12 +78,13 @@
         }
     }
 
-    // 2. Fetch live SQL calculations from Cloudflare Worker Action 2
+    // 2. Fetch calculations from Cloudflare Worker
     async function getBusPrediction() {
         const stopSelect = document.getElementById('stopSelect');
         const passengerStopId = stopSelect.value;
-        const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text;
+        const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text; 
         const directionSelect = document.getElementById('direction').value;
+        const selectedDayType = document.getElementById('dayType').value; // <--- Extracted Day Type
 
         if (!passengerStopId) {
             alert("Please select a valid bus stop.");
@@ -85,7 +92,13 @@
         }
 
         const line = "1";
-        const predictionUrl = `${workerUrl}?action=get_prediction&line=${line}&passenger_stop_id=${passengerStopId}&direction=${encodeURIComponent(directionSelect)}`;
+        
+        // Dynamic time extraction format "HH:mm" from local user device
+        const now = new Date();
+        const currentTimeStr = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
+    
+        // UPDATED: Appending time and day_type parameters seamlessly into URL payload
+        const predictionUrl = `${workerUrl}?action=get_prediction&line=${line}&passenger_stop_id=${passengerStopId}&stop_name=${encodeURIComponent(selectedStopName)}&direction=${encodeURIComponent(directionSelect)}&day_type=${selectedDayType}&time=${currentTimeStr}`;
 
         try {
             const response = await fetch(predictionUrl);
@@ -97,10 +110,11 @@
             }
 
             document.getElementById('resStopName').innerText = selectedStopName;
-            document.getElementById('resDirection').innerText = data.direction;
+            // Clean up UI display display label
+            document.getElementById('resDirection').innerText = directionSelect === "roxel" ? "Roxel" : "Amelsbüren";
             document.getElementById('resScheduled').innerText = data.scheduled_time;
-            document.getElementById('resDelay').innerText = data.delay_minutes;
-            document.getElementById('resPredicted').innerText = data.predicted_next_bus;
+            document.getElementById('resDelay').innerText = data.delay_minutes ?? 0;
+            document.getElementById('resPredicted').innerText = data.predicted_next_bus ?? data.scheduled_time;
             
             const statusEl = document.getElementById('liveStatus');
             if (data.bus_found) {
