@@ -52,11 +52,16 @@
     <script>
     const workerUrl = "https://backend-api.echoechung.workers.dev/";
 
-    // 1. Fetch stop names dynamically
+    // 1. Fetch stop names dynamically and sort them ascending (A-Z)
     async function loadStops() {
         try {
             const response = await fetch(`${workerUrl}?action=get_stops`);
             const stops = await response.json();
+            
+            // === FIXED: Sort options ascendingly with German localization ('de') ===
+            stops.sort((a, b) => {
+                return a.stop_name.localeCompare(b.stop_name, 'de');
+            });
             
             const stopSelect = document.getElementById('stopSelect');
             stopSelect.innerHTML = ''; 
@@ -84,7 +89,7 @@
         const passengerStopId = stopSelect.value;
         const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text; 
         const directionSelect = document.getElementById('direction').value;
-        const selectedDayType = document.getElementById('dayType').value; // <--- Extracted Day Type
+        const selectedDayType = document.getElementById('dayType').value; 
 
         if (!passengerStopId) {
             alert("Please select a valid bus stop.");
@@ -93,11 +98,9 @@
 
         const line = "1";
         
-        // Dynamic time extraction format "HH:mm" from local user device
         const now = new Date();
         const currentTimeStr = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
     
-        // UPDATED: Appending time and day_type parameters seamlessly into URL payload
         const predictionUrl = `${workerUrl}?action=get_prediction&line=${line}&passenger_stop_id=${passengerStopId}&stop_name=${encodeURIComponent(selectedStopName)}&direction=${encodeURIComponent(directionSelect)}&day_type=${selectedDayType}&time=${currentTimeStr}`;
 
         try {
@@ -110,7 +113,6 @@
             }
 
             document.getElementById('resStopName').innerText = selectedStopName;
-            // Clean up UI display display label
             document.getElementById('resDirection').innerText = directionSelect === "roxel" ? "Roxel" : "Amelsbüren";
             document.getElementById('resScheduled').innerText = data.scheduled_time;
             document.getElementById('resDelay').innerText = data.delay_minutes ?? 0;
