@@ -26,8 +26,8 @@
 
     <label for="direction">Direction:</label>
     <select id="direction">
-        <option value="roxel">Roxel (Direction 1)</option>
-        <option value="amelsburen">Amelsbüren (Direction 2)</option>
+        <option value="Roxel">Roxel (Direction 1)</option>
+        <option value="Amelsbüren">Amelsbüren (Direction 2)</option>
     </select>
 
     <label for="dayType">Day Schedule Type:</label>
@@ -37,106 +37,139 @@
         <option value="Sunday">Sonntag</option>
     </select>
 
-    <button onclick="getBusPrediction()">Check Next Bus</button>
+    <button id="submitBtn">Check Next Bus</button>
 
     <div id="resultBox" class="result-box">
         <h3>Prediction Results:</h3>
-        <p><strong>Stop Name:</strong> <span id="resStopName" style="font-weight: bold;"></span></p>
-        <p><strong>Direction:</strong> <span id="resDirection"></span></p>
         <p><strong>Scheduled Time:</strong> <span id="resScheduled"></span></p>
         <p><strong>Estimated Delay:</strong> <span id="resDelay" class="delay-text"></span> minutes</p>
         <p><strong>Predicted Next Bus:</strong> <span id="resPredicted" style="color: green; font-weight: bold;"></span></p>
         <p id="liveStatus" class="status-msg"></p>
     </div>
     
-    <script>
-    const workerUrl = "https://backend-api.echoechung.workers.dev/";
+<script>
+const WORKER_URL = "https://backend-api.echoechung.workers.dev/";
+const stopIdMap = {};
 
-    // 1. Fetch stop names dynamically and sort them ascending (A-Z)
-    async function loadStops() {
-        try {
-            const response = await fetch(`${workerUrl}?action=get_stops`);
-            const stops = await response.json();
-            
-            // === FIXED: Sort options ascendingly with German localization ('de') ===
-            stops.sort((a, b) => {
-                return a.stop_name.localeCompare(b.stop_name, 'de');
-            });
-            
-            const stopSelect = document.getElementById('stopSelect');
-            stopSelect.innerHTML = ''; 
+// DOM Cache
+const stopSelect = document.getElementById('stopSelect');
+const directionSelect = document.getElementById('direction');
+const dayTypeSelect = document.getElementById('dayType');
+const submitBtn = document.getElementById('submitBtn');
+const resultBox = document.getElementById('resultBox');
 
-            stops.forEach(row => {
-                const name = row.stop_name;
-                const id = row.stop_id;
+const resScheduled = document.getElementById('resScheduled');
+const resDelay = document.getElementById('resDelay');
+const resPredicted = document.getElementById('resPredicted');
+const liveStatus = document.getElementById('liveStatus');
 
-                if (name && id) {
-                    const opt = document.createElement('option');
-                    opt.value = id;          
-                    opt.textContent = name;  
-                    stopSelect.appendChild(opt);
-                }
-            });
-        } catch (err) {
-            console.error("Error loading stops database through Cloudflare Proxy:", err);
-            document.getElementById('stopSelect').innerHTML = '<option>Error loading stops</option>';
-        }
+function addMinutesToTime(timeStr, minutesToAdd) {
+    if (!timeStr || timeStr === "N/A" || !timeStr.includes(":")) return null;
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const date = new Date();
+    date.setHours(hours, minutes + Math.round(parseFloat(minutesToAdd || 0)), 0, 0);
+    return date.toTimeString().substring(0, 5);
+}
+
+async function loadStops() {
+    try {
+        const response = await fetch(`${WORKER_URL}?action=get_stops`);
+        const stops = await response.json();
+        
+        if (!Array.isArray(stops)) return;
+        stopSelect.innerHTML = ''; 
+
+        const parsedStops = stops.map(item => {
+            const valA = item.stop_name || Object.values(item)[0] || "";
+            const valB = item.stop_id || Object.values(item)[1] || "";
+            if (/^\d+$/.test(valA.toString().trim())) {
+                return { name: valB.toString().trim(), id: valA.toString().trim() };
+            }
+            return { name: valA.toString().trim(), id: valB.toString().trim() };
+        });
+
+        parsedStops.sort((a, b) => a.name.localeCompare(b.name, 'de'));
+
+        parsedStops.forEach(stop => {
+            if (stop.name && stop.id) {
+                stopIdMap[stop.id] = stop.name;
+                const opt = document.createElement('option');
+                opt.value = stop.id;        
+                opt.textContent = stop.name; 
+                stopSelect.appendChild(opt);
+            }
+        });
+    } catch (err) {
+        console.error("Error loading stops:", err);
+    }
+}
+
+async function getBusPrediction() {
+    if (stopSelect.selectedIndex === -1 || !stopSelect.value) {
+        alert("Please select a valid bus stop.");
+        return;
     }
 
-    // 2. Fetch calculations from Cloudflare Worker
-    async function getBusPrediction() {
-        const stopSelect = document.getElementById('stopSelect');
-        const passengerStopId = stopSelect.value;
-        const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text; 
-        const directionSelect = document.getElementById('direction').value;
-        const selectedDayType = document.getElementById('dayType').value; 
+    const passengerStopId = stopSelect.value;
+    const selectedStopName = stopSelect.options[stopSelect.selectedIndex].text; 
+    const direction = directionSelect.value;
+    const selectedDayType = dayTypeSelect.value; 
 
-        if (!passengerStopId) {
-            alert("Please select a valid bus stop.");
+    const options = { timeZone: 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hour12: false };
+    const currentTimeStr = new Intl.DateTimeFormat('de-DE', options).format(new Date());
+
+    const queryParams = new URLSearchParams({
+        action: 'get_prediction',
+        line: "1",
+        passenger_stop_id: passengerStopId,
+        stop_name: selectedStopName,
+        direction: direction,
+        day_type: selectedDayType,
+        time: currentTimeStr
+    });
+
+    try {
+        const response = await fetch(`${WORKER_URL}?${queryParams.toString()}`);
+        const data = await response.json();
+
+        if (data.error) {
+            alert(`Error: ${data.error}`);
             return;
         }
 
-        const line = "1";
+        // 1. Core visual population
+        const scheduledTime = data.scheduled_time || "N/A";
+        resScheduled.innerText = scheduledTime;
+
+        const delayMinutes = data.delay_minutes ?? 0;
+        resDelay.innerText = delayMinutes;
+
+        // 2. Math string calculation: G-Sheet timetable + Estimated Delay
+        const calculatedPrediction = addMinutesToTime(scheduledTime, delayMinutes);
+        resPredicted.innerText = calculatedPrediction || scheduledTime;
         
-        const now = new Date();
-        const currentTimeStr = ("0" + now.getHours()).slice(-2) + ":" + ("0" + now.getMinutes()).slice(-2);
-    
-        const predictionUrl = `${workerUrl}?action=get_prediction&line=${line}&passenger_stop_id=${passengerStopId}&stop_name=${encodeURIComponent(selectedStopName)}&direction=${encodeURIComponent(directionSelect)}&day_type=${selectedDayType}&time=${currentTimeStr}`;
-
-        try {
-            const response = await fetch(predictionUrl);
-            const data = await response.json();
-
-            if (data.error) {
-                alert("Error: " + data.error);
-                return;
-            }
-
-            document.getElementById('resStopName').innerText = selectedStopName;
-            document.getElementById('resDirection').innerText = directionSelect === "roxel" ? "Roxel" : "Amelsbüren";
-            document.getElementById('resScheduled').innerText = data.scheduled_time;
-            document.getElementById('resDelay').innerText = data.delay_minutes ?? 0;
-            document.getElementById('resPredicted').innerText = data.predicted_next_bus ?? data.scheduled_time;
-            
-            const statusEl = document.getElementById('liveStatus');
-            if (data.bus_found) {
-                statusEl.innerText = `⚡ Live bus tracked! Previous stop: "${data.current_bus_location}".`;
-                statusEl.style.color = "#28a745";
-            } else {
-                statusEl.innerText = "ℹ️ No live bus currently approaching this stop. Displaying scheduled defaults.";
-                statusEl.style.color = "#6c757d";
-            }
-
-            document.getElementById('resultBox').style.display = 'block';
-
-        } catch (error) {
-            console.error("Error fetching data:", error);
-            alert("Failed to connect to the Cloudflare Worker.");
+        let locationDescription = data.current_bus_location || "";
+        if (locationDescription) {
+            locationDescription = locationDescription.replace(/\d+/g, (id) => stopIdMap[id] || id);
         }
+
+        if (data.bus_found) {
+            liveStatus.innerText = `⚡ Live bus tracked! Current Status: "${locationDescription}".`;
+            liveStatus.style.color = "#28a745";
+        } else {
+            liveStatus.innerText = "ℹ️ No live bus currently approaching this stop. Displaying scheduled defaults.";
+            liveStatus.style.color = "#6c757d";
+        }
+
+        resultBox.style.display = 'block';
+    } catch (error) {
+        console.error("Error:", error);
+        alert("Failed to connect to the backend framework.");
     }
+}
 
-    window.onload = loadStops;
+window.addEventListener('DOMContentLoaded', loadStops);
+submitBtn.addEventListener('click', getBusPrediction);
 </script>
-
 </body>
 </html>
